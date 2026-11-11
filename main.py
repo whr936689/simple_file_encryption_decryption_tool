@@ -1,30 +1,125 @@
-def mainLG(keyd,modes,locas,sx_proc=None):
-    from jiami_jiemi import FileProtector
-    from file_cz import cz_bin,cz_save_bin
-    import struct
-    import os
-    mode=modes
-    key=keyd
-    jm=FileProtector(key)
-    if mode==1:
-        print(jm.jiami(input("源字符串：")))
-    if mode==2:
-        print(jm.jiemi(input("源字符串：")))
-    if mode==3:
-        loca=locas
-        text=cz_bin(loca,jd_sh=lambda n: sx_proc(n, "正在读取文件喵..."))   #文件转字节流，读取文件的进度显示喵
-        file_ext = os.path.splitext(loca)[1].encode('utf-8')  #获取后缀并转字节,encode表示转字节流,前面负责提取拓展名
-        ext_len = struct.pack('I', len(file_ext))
-        text=ext_len+file_ext+text  #合并拓展名长度和原拓展名和字节流喵
-        text=jm.jiami(text,process_callback=lambda n: sx_proc(n, "正在加密数据喵...")) #字节流加密
-        #print(text)
-        cz_save_bin(text,loca,True,file_ext,jd_sh=lambda n: sx_proc(n, "正在写入磁盘喵..."))   #写入加密后文件
-    if mode==4:
-        loca=locas
-        text=cz_bin(loca,jd_sh=lambda n: sx_proc(n, "正在读取文件喵..."))
-        text=jm.jiemi(text,process_callback=lambda n: sx_proc(n, "正在解密数据喵..."))
-        ext_len_bytes=text[:4]
-        ext_len=struct.unpack('I', ext_len_bytes)[0]    #拓展名长度
-        file_ext = text[4: 4 + ext_len].decode('utf-8') #文件拓展名
-        real_text = text[4 + ext_len:]         #真实源文件的字节流
-        cz_save_bin(real_text,loca,False,file_ext,jd_sh=lambda n: sx_proc(n, "正在导出原始文件喵..."))##写入解密后文件
+"""
+主流程 - 支持单文件和批量加密/解密
+"""
+
+import os
+from crypto_core import (
+    encrypt_file_content,
+    decrypt_file_content,
+    detect_format,
+    ALGO_OFFSET, ALGO_XOR, ALGO_AES256,
+    ALGO_NAMES,
+)
+from file_cz import (
+    read_file,
+    write_encrypted_file,
+    write_decrypted_file,
+)
+
+
+def encrypt_one_file(file_path, key_str, algo, output_ext=".jmdc", progress_cb=None):
+    """
+    加密单个文件
+    :param progress_cb: 回调 (percent, status) - percent 0~100
+    :return: (输出路径, 错误信息或 None)
+    """
+    try:
+        fname = os.path.basename(file_path)
+
+        def cb(n, status=None):
+            if progress_cb:
+                progress_cb(n, status or f"加密中: {fname}")
+
+        cb(0, "准备读取...")
+        raw = read_file(file_path, progress_cb=lambda p: cb(p, "读取文件..."))
+        cb(32, "加密数据...")
+
+        orig_ext = os.path.splitext(file_path)[1] or ".dat"
+        encrypted = encrypt_file_content(
+            raw, key_str, algo, orig_ext,
+            progress_cb=lambda p: cb(32 + p * 0.56, "加密数据..."),
+        )
+        cb(88, "写入磁盘...")
+
+        out_path = write_encrypted_file(
+            encrypted, file_path, output_ext,
+            progress_cb=lambda p: cb(p, "写入磁盘..."),
+        )
+        cb(100, f"完成: {os.path.basename(out_path)}")
+        return out_path, None
+    except Exception as e:
+        return None, str(e)
+
+
+def decrypt_one_file(file_path, key_str, progress_cb=None):
+    """
+    解密单个文件（自动检测算法）
+    :param progress_cb: 回调 (percent, status) - percent 0~100
+    :return: (输出路径, 错误信息或 None)
+    """
+    try:
+        fname = os.path.basename(file_path)
+
+        def cb(n, status=None):
+            if progress_cb:
+                progress_cb(n, status or f"解密中: {fname}")
+
+        cb(0, "准备读取...")
+        raw = read_file(file_path, progress_cb=lambda p: cb(p, "读取文件..."))
+        cb(32, "解密数据...")
+
+        plain_data, orig_ext, used_algo = decrypt_file_content(
+            raw, key_str,
+            progress_cb=lambda p: cb(32 + p * 0.56, "解密数据..."),
+        )
+        cb(88, "写入磁盘...")
+
+        out_path = write_decrypted_file(
+            plain_data, file_path, orig_ext,
+            progress_cb=lambda p: cb(p, "写入磁盘..."),
+        )
+        cb(100, f"完成: {os.path.basename(out_path)}")
+        return out_path, None
+    except Exception as e:
+        return None, str(e)
+
+
+def batch_process(file_list, key_str, mode, algo=None, output_ext=".jmdc",
+                  overall_progress_cb=None, file_done_cb=None):
+    """
+    批量处理文件
+    :param file_list: 文件路径列表
+    :param key_str: 密码
+    :param mode: "encrypt" 或 "decrypt"
+    :param algo: 加密算法（仅加密时用）
+    :param output_ext: 加密输出后缀（仅加密时用）
+    :param overall_progress_cb: 总体进度回调 (file_index, total, n_in_file, filename, status)
+    :param file_done_cb: 每个文件完成回调 (index, total, path_or_error)
+    :return: 成功列表, 失败列表
+    """
+    success = []
+    failures = []
+    total = len(file_list)
+
+    for idx, fpath in enumerate(file_list):
+        if overall_progress_cb:
+            overall_progress_cb(idx, total, 0, fpath, f"[{idx + 1}/{total}] 准备中...")
+
+        def per_file_cb(n, status=""):
+            if overall_progress_cb:
+                overall_progress_cb(idx, total, n, fpath, status)
+
+        if mode == "encrypt":
+            out_path, err = encrypt_one_file(fpath, key_str, algo, output_ext, progress_cb=per_file_cb)
+        else:
+            out_path, err = decrypt_one_file(fpath, key_str, progress_cb=per_file_cb)
+
+        if err is None:
+            success.append((fpath, out_path))
+        else:
+            failures.append((fpath, err))
+
+        if file_done_cb:
+            file_done_cb(idx, total, out_path if err is None else err, err is None)
+
+    return success, failures
