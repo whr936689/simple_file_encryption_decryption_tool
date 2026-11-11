@@ -121,6 +121,29 @@ class App(ctk.CTk):
 
         self._algo_map = {v: k for k, v in ALGO_NAMES.items()}
 
+        # ========= 输出目录 =========
+        frame_outdir = ctk.CTkFrame(self, fg_color="#babce0", corner_radius=10)
+        frame_outdir.pack(pady=6, padx=20, fill="x")
+
+        self.chk_outdir = ctk.CTkCheckBox(
+            frame_outdir, text="自定义输出目录", text_color="#3d4566",
+            fg_color="#4d5880", hover_color="#3d4566", border_color="#5a6794",
+            font=("Microsoft YaHei", 13), command=self._toggle_outdir,
+        )
+        self.chk_outdir.pack(side="left", padx=(10, 8), pady=8)
+
+        self.ent_outdir = ctk.CTkEntry(
+            frame_outdir, font=("", 13), height=32, state="disabled",
+        )
+        self.ent_outdir.pack(side="left", padx=4, pady=8, fill="x", expand=True)
+
+        self.btn_outdir = ctk.CTkButton(
+            frame_outdir, text="选择...", font=("Microsoft YaHei", 13),
+            fg_color="#6c7bb8", hover_color="#3d4566", height=32, width=90,
+            state="disabled", command=self._pick_outdir,
+        )
+        self.btn_outdir.pack(side="left", padx=(4, 10), pady=8)
+
         # ========= 文件列表 =========
         frame_files = ctk.CTkFrame(self, fg_color="#d1d8f0", corner_radius=10)
         frame_files.pack(pady=6, padx=20, fill="both", expand=True)
@@ -252,6 +275,21 @@ class App(ctk.CTk):
         self.file_list.clear()
         self.lbl_count.configure(text="(0 个)")
 
+    def _toggle_outdir(self):
+        on = self.chk_outdir.get()
+        if on:
+            self.ent_outdir.configure(state="normal")
+            self.btn_outdir.configure(state="normal")
+        else:
+            self.ent_outdir.configure(state="disabled")
+            self.btn_outdir.configure(state="disabled")
+
+    def _pick_outdir(self):
+        d = filedialog.askdirectory(title="选择输出目录")
+        if d:
+            self.ent_outdir.delete(0, "end")
+            self.ent_outdir.insert(0, d)
+
     def _start(self):
         if self._worker and self._worker.is_alive():
             messagebox.showwarning("提示", "正在处理中，请稍候...")
@@ -282,9 +320,19 @@ class App(ctk.CTk):
         algo = self._algo_map.get(algo_name, ALGO_OFFSET)
         ext = self.cmb_ext.get()
 
+        output_dir = None
+        if self.chk_outdir.get():
+            output_dir = self.ent_outdir.get().strip() or None
+            if output_dir and not os.path.isdir(output_dir):
+                try:
+                    os.makedirs(output_dir, exist_ok=True)
+                except Exception as e:
+                    messagebox.showerror("错误", f"无法创建输出目录：{e}")
+                    return
+
         self._worker = threading.Thread(
             target=self._run_batch,
-            args=(self.file_list[:], key, mode, algo, ext),
+            args=(self.file_list[:], key, mode, algo, ext, output_dir),
             daemon=True,
         )
         self._worker.start()
@@ -292,24 +340,23 @@ class App(ctk.CTk):
     # =========================================
     # 后台处理
     # =========================================
-    def _run_batch(self, file_list, key, mode, algo, ext):
+    def _run_batch(self, file_list, key, mode, algo, ext, output_dir=None):
         total = len(file_list)
 
         def overall_cb(idx, total_, n_in_file, fpath, status):
-            # 总体进度 = (已完成文件数 + 当前文件进度) / 总文件数
             overall = (idx + n_in_file / 100) / total_ * 100
             self.after(0, self._update_progress, overall, status)
 
         def done_cb(idx, total_, result, is_ok):
             label = "✅" if is_ok else "❌"
             name = os.path.basename(file_list[idx])
-            detail = result if is_ok else result
             self.after(0, self.lbl_status.configure,
-                       {"text": f"[{idx + 1}/{total_}] {label} {name} — {detail}"})
+                       {"text": f"[{idx + 1}/{total_}] {label} {name} — {result}"})
 
         try:
             success, failures = batch_process(
                 file_list, key, mode, algo=algo, output_ext=ext,
+                output_dir=output_dir,
                 overall_progress_cb=overall_cb,
                 file_done_cb=done_cb,
             )
