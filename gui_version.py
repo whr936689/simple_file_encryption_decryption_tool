@@ -22,8 +22,8 @@ class App(ctk.CTk):
 
         # ========= 窗口设置 =========
         self.title("文件加密/解密工具 v2.0")
-        self.geometry("780x640")
-        self.resizable(False, False)
+        self.geometry("780x760")
+        self.minsize(720, 700)
         ctk.set_appearance_mode("light")
         ctk.set_default_color_theme("blue")
 
@@ -36,9 +36,10 @@ class App(ctk.CTk):
         # ========= 背景 =========
         try:
             raw_image = Image.open("background_1.png")
-            bg_img = ctk.CTkImage(light_image=raw_image, dark_image=raw_image, size=(780, 640))
+            bg_img = ctk.CTkImage(light_image=raw_image, dark_image=raw_image, size=(780, 760))
             bg_label = ctk.CTkLabel(self, image=bg_img, text="", fg_color="transparent")
             bg_label.place(x=0, y=0, relwidth=1, relheight=1)
+            self._bg_img = bg_img  # 保留引用
         except Exception:
             pass
 
