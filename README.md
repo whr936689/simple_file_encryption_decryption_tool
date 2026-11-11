@@ -17,6 +17,10 @@ Python + CustomTkinter 写的一个文件加密小工具，支持多文件批量
 
 去 [Releases](../../releases) 下载最新版，解压双击 `文件加密解密工具.exe` 就能用。
 
+## 截图
+
+![主界面](screenshots/main_window.png)
+
 ## 从源码跑
 
 ```bash
